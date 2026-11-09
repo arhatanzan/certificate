@@ -1,5 +1,6 @@
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import QRCode from 'qrcode';
 
 async function asset(url) {
   const response = await fetch(new URL(url, document.baseURI));
@@ -8,7 +9,13 @@ async function asset(url) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-function centered(page, font, value, position, color = rgb(0.10, 0.27, 0.23)) {
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? [parseInt(result[1], 16) / 255, parseInt(result[2], 16) / 255, parseInt(result[3], 16) / 255] : [0.10, 0.27, 0.23];
+}
+
+function centered(page, font, value, position, colorHex = '#1a453b') {
+  if (position.hidden) return;
   let size = position.size;
   const text = String(value);
   const supported = new Set(font.getCharacterSet());
@@ -17,6 +24,8 @@ function centered(page, font, value, position, color = rgb(0.10, 0.27, 0.23)) {
   }
   while (font.widthOfTextAtSize(text, size) > position.maxWidth && size > 6) size -= 0.5;
   if (font.widthOfTextAtSize(text, size) > position.maxWidth) throw new Error('Certificate text is too long for this template.');
+  const [r, g, b] = hexToRgb(colorHex || '#1a453b');
+  const color = rgb(r, g, b);
   page.drawText(text, { x: position.x - font.widthOfTextAtSize(text, size) / 2, y: position.y, size, font, color });
 }
 
@@ -33,19 +42,36 @@ export async function generateCertificate(certificate, config = window.CERTIFICA
   const page = pdf.addPage([841.89, 595.28]);
   page.drawImage(image, { x: 0, y: 0, width: 841.89, height: 595.28 });
   if (config.sample) {
-    centered(page, font, certificate.issuer, { x: 421, y: 484, size: 13, maxWidth: 650 });
-    centered(page, font, 'CERTIFICATE OF PARTICIPATION', { x: 421, y: 413, size: 26, maxWidth: 700 });
-    centered(page, font, 'Presented to', { x: 421, y: 365, size: 12, maxWidth: 500 });
-    centered(page, font, 'for completing', { x: 421, y: 272, size: 12, maxWidth: 500 });
+    centered(page, font, certificate.issuer, { x: 421, y: 484, size: 13, maxWidth: 650, hidden: false, color: '#1a453b' });
+    centered(page, font, 'CERTIFICATE OF PARTICIPATION', { x: 421, y: 413, size: 26, maxWidth: 700, hidden: false, color: '#1a453b' });
+    centered(page, font, 'Presented to', { x: 421, y: 365, size: 12, maxWidth: 500, hidden: false, color: '#1a453b' });
+    centered(page, font, 'for completing', { x: 421, y: 272, size: 12, maxWidth: 500, hidden: false, color: '#1a453b' });
   }
-  centered(page, font, certificate.name, config.positions.name);
-  centered(page, font, certificate.eventTitle, config.positions.event);
-  centered(page, font, formatDate(certificate.eventDate), config.positions.date);
-  centered(page, font, certificate.id, config.positions.id);
+  centered(page, font, certificate.name, config.positions.name, config.positions.name?.color);
+  centered(page, font, certificate.eventTitle, config.positions.event, config.positions.event?.color);
+  centered(page, font, formatDate(certificate.eventDate), config.positions.date, config.positions.date?.color);
+  centered(page, font, certificate.id, config.positions.id, config.positions.id?.color);
   const verifyUrl = new URL('./', document.baseURI);
   verifyUrl.search = new URLSearchParams({ route: 'verify', id: certificate.id });
-  centered(page, font, verifyUrl.href, config.positions.verify || { x: 421, y: 67, size: 7, maxWidth: 700 });
-  if (certificate.preview) centered(page, font, 'PREVIEW - NOT ISSUED', { x: 421, y: 22, size: 9, maxWidth: 500 }, rgb(0.65, 0.16, 0.12));
+  centered(page, font, verifyUrl.href, config.positions.verify || { x: 421, y: 67, size: 7, maxWidth: 700, hidden: false, color: '#1a453b' }, config.positions.verify?.color);
+  
+  // Add QR code if configured
+  if (config.positions.qr && !config.positions.qr.hidden) {
+    try {
+      const qrCanvas = await QRCode.toCanvas(verifyUrl.href, { width: 256, margin: 1 });
+      const qrDataUrl = qrCanvas.toDataURL('image/png');
+      const qrResponse = await fetch(qrDataUrl);
+      const qrBytes = await qrResponse.arrayBuffer();
+      const qrImage = await pdf.embedPng(new Uint8Array(qrBytes));
+      const qrPos = config.positions.qr;
+      const qrSize = qrPos.size || 40;
+      page.drawImage(qrImage, { x: qrPos.x - qrSize / 2, y: qrPos.y - qrSize / 2, width: qrSize, height: qrSize });
+    } catch (e) {
+      console.error('QR code generation error:', e);
+    }
+  }
+  
+  if (certificate.preview) centered(page, font, 'PREVIEW - NOT ISSUED', { x: 421, y: 22, size: 9, maxWidth: 500, hidden: false, color: '#a41508' }, '#a41508');
   pdf.setTitle(`${certificate.eventTitle} - ${certificate.name}`);
   pdf.setAuthor(certificate.issuer);
   pdf.setSubject(`Certificate ${certificate.id}`);

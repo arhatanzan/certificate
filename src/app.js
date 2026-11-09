@@ -228,12 +228,28 @@ async function adminView() {
   document.querySelector('#submission-rows').addEventListener('change', async event => {
     const toggle = event.target.closest('[data-approve]');
     if (!toggle) return;
+    const submissionId = toggle.dataset.approve;
+    const submission = submissions.find(s => s.id === submissionId);
     const flag = toggle.checked ? 1 : 0;
     toggle.disabled = true;
     try {
-      const result = await request('approve', { session, id: toggle.dataset.approve, flag });
+      const result = await request('approve', { session, id: submissionId, flag });
       submissions = submissions.map(row => row.id === result.submission.id ? result.submission : row);
-      status(result.submission.notification_status === 'failed' ? 'Approval saved. Email delivery failed; automatic retry is scheduled.' : 'Approval status updated.');
+      status('Approval status updated.');
+      if (flag === 1 && result.submission.notification_status !== 'sent') {
+        // Show email confirmation for new approvals
+        const confirmed = confirm(`Send certificate approval email to ${submission.email}?`);
+        if (confirmed) {
+          try {
+            await request('sendApprovalEmail', { session, id: submissionId });
+            status('Approval email sent successfully.');
+          } catch (emailError) {
+            status(`Approval saved, but email sending failed: ${emailError.message}`, true);
+          }
+        }
+      } else if (flag === 0) {
+        status('Certificate approval revoked.');
+      }
       render();
     } catch (error) {
       if (error.code === 'UNAUTHORIZED') { adminLogin(error.message); return; }

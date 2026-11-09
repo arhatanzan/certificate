@@ -10,3 +10,62 @@
 @media(max-width:950px){.template-workspace{grid-template-columns:minmax(0,1fr) 240px;gap:20px}.template-toolbar{align-items:flex-start}.artwork-actions{gap:10px}.artwork-actions .small-label{font-size:8px}.template-commands .button{padding:11px 12px}}
 @media(max-width:700px){.template-workspace{grid-template-columns:minmax(0,1fr);gap:28px}.template-toolbar{flex-wrap:wrap;gap:16px}.template-commands{width:100%;justify-content:flex-end}.template-page .admin-heading{align-items:center}.template-page .page-heading h1{font-size:24px}.template-page .admin-heading>.button{padding:10px;font-size:10px}.template-preview-area{padding:10px}.coordinate-grid label{min-height:0}.template-controls h2{margin-bottom:18px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+/* New template editor features */
+.field-selection { margin-bottom: 20px; }
+.field-selection .small-label { display: block; margin-top: 8px; }
+
+.field-actions { display: flex; gap: 10px; margin: 20px 0; }
+.action-btn { 
+  display: inline-flex; 
+  align-items: center; 
+  justify-content: center; 
+  gap: 6px; 
+  padding: 8px 12px; 
+  border-radius: 4px; 
+  background: #e8f0e9; 
+  color: var(--green); 
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+.action-btn:hover { background: #d5e8d7; }
+.action-btn.danger { color: #a63d30; background: #fbefeb; }
+.action-btn.danger:hover { background: #f8e3dd; }
+.action-btn svg { width: 14px; height: 14px; }
+
+.color-section { 
+  margin: 20px 0; 
+  display: flex; 
+  align-items: center; 
+  gap: 10px;
+}
+.color-section label { 
+  display: flex; 
+  align-items: center; 
+  gap: 6px; 
+  font-weight: 600; 
+  font-size: 12px;
+  margin: 0;
+}
+.color-section input[type="color"] { 
+  width: 40px; 
+  height: 40px; 
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.color-section svg { width: 16px; height: 16px; }
+
+.formatting-section { 
+  margin: 20px 0; 
+  padding: 12px; 
+  background: #f6f9f7; 
+  border-radius: 4px;
+}
+.formatting-section h3 { 
+  font-size: 12px; 
+  font-weight: 600; 
+  margin: 0 0 12px 0;
+}
+.formatting-section .consent { margin: 8px 0; }
