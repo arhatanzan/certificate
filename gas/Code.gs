@@ -8,6 +8,7 @@ function doGet(e) {
   return respond_(function () {
     const params = e && e.parameter || {};
     if (params.action === 'events') return { events: EVENTS };
+    if (params.action === 'template') return locked_(function () { return { template: readTemplate_() }; });
     if (params.action === 'verify' || params.action === 'download') {
       const row = findRow_(sheet_(), validId_(params.id));
       if (!row || Number(row.data.flag) !== 1) fail_('NOT_FOUND', 'No approved certificate was found.');
@@ -25,7 +26,27 @@ function doPost(e) {
   return respond_(function () {
     let body;
     try { body = JSON.parse(e.postData.contents); } catch (error) { fail_('BAD_REQUEST', 'Invalid JSON body.'); }
-    if (body.action === 'login') return login_(body.secret);
+    if (body.action === 'login') return login_(body);
+    if (body.action === 'saveTemplate') {
+      requireSession_(body.session);
+      const template = validateTemplate_(body.template);
+      return locked_(function () {
+        const spreadsheet = SpreadsheetApp.openById(property_('SPREADSHEET_ID'));
+        const name = sheetName_() + '_Template';
+        let sheet = spreadsheet.getSheetByName(name);
+        if (!sheet) sheet = spreadsheet.insertSheet(name);
+        if (sheet.getLastRow() && sheet.getRange(1, 1).getValues()[0][0] !== 'certificate-template-v1') {
+          fail_('CONFIGURATION', 'Template tab already contains unrelated data. Choose a different SHEET_NAME.');
+        }
+        const serialized = JSON.stringify(template);
+        const chunks = [];
+        for (let offset = 0; offset < serialized.length; offset += 40000) chunks.push(serialized.slice(offset, offset + 40000));
+        const values = [['certificate-template-v1', chunks.length]].concat(chunks.map(function (chunk) { return ['part', 'chunk:' + chunk]; }));
+        sheet.getRange(1, 1, values.length, 2).setValues(values);
+        SpreadsheetApp.flush();
+        return { saved: true };
+      });
+    }
     if (body.action === 'logout') {
       if (typeof body.session === 'string') CacheService.getScriptCache().remove('session:' + body.session);
       return {};
@@ -141,19 +162,82 @@ function setup() {
   if (handlers.indexOf('retryNotifications') === -1) ScriptApp.newTrigger('retryNotifications').timeBased().everyMinutes(10).create();
 }
 
-function login_(secret) {
-  if (typeof secret !== 'string' || secret.length > 256) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
-  const expected = property_('ADMIN_SECRET');
-  if (expected.length < 32) fail_('CONFIGURATION', 'ADMIN_SECRET must have at least 32 characters.');
-  const digest = function (value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value); };
-  const actualBytes = digest(secret);
-  const expectedBytes = digest(expected);
-  let difference = 0;
-  for (let index = 0; index < expectedBytes.length; index++) difference |= actualBytes[index] ^ expectedBytes[index];
-  if (difference !== 0) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
+function login_(body) {
+  if (body.secret !== undefined) {
+    if (typeof body.secret !== 'string' || body.secret.length > 256) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
+    const expected = property_('ADMIN_SECRET');
+    if (expected.length < 32) fail_('CONFIGURATION', 'ADMIN_SECRET must have at least 32 characters.');
+    if (!sameSecret_(body.secret, expected)) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
+  } else {
+    if (typeof body.username !== 'string' || !body.username.trim() || body.username.length > 100 ||
+        typeof body.password !== 'string' || body.password.length > 256) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
+    const username = property_('ADMIN_USERNAME');
+    const password = property_('ADMIN_PASSWORD');
+    if (password.length < 16) fail_('CONFIGURATION', 'ADMIN_PASSWORD must have at least 16 characters.');
+    const validUsername = sameSecret_(body.username.trim(), username);
+    const validPassword = sameSecret_(body.password, password);
+    if (!validUsername || !validPassword) fail_('UNAUTHORIZED', 'Invalid admin credentials.');
+  }
   const session = Utilities.getUuid() + Utilities.getUuid();
   CacheService.getScriptCache().put('session:' + session, 'admin', 1800);
   return { session: session, expiresIn: 1800 };
+}
+
+function sameSecret_(actual, expected) {
+  const digest = function (value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value); };
+  const actualBytes = digest(actual);
+  const expectedBytes = digest(expected);
+  let difference = 0;
+  for (let index = 0; index < expectedBytes.length; index++) difference |= actualBytes[index] ^ expectedBytes[index];
+  return difference === 0;
+}
+
+function readTemplate_() {
+  const sheet = SpreadsheetApp.openById(property_('SPREADSHEET_ID')).getSheetByName(sheetName_() + '_Template');
+  if (!sheet || !sheet.getLastRow()) return null;
+  const header = sheet.getRange(1, 1, 1, 2).getValues()[0];
+  const count = Number(header[1]);
+  if (header[0] !== 'certificate-template-v1' || !Number.isInteger(count) || count < 1 || count > 75) {
+    fail_('CONFIGURATION', 'Stored certificate template is invalid.');
+  }
+  const parts = sheet.getRange(2, 2, count, 1).getValues().map(function (row) {
+    if (typeof row[0] !== 'string' || row[0].indexOf('chunk:') !== 0) fail_('CONFIGURATION', 'Stored certificate template is incomplete.');
+    return row[0].slice(6);
+  });
+  try { return JSON.parse(parts.join('')); }
+  catch (error) { fail_('CONFIGURATION', 'Stored certificate template is unreadable.'); }
+}
+
+function validateTemplate_(input) {
+  if (!input || typeof input !== 'object' || typeof input.url !== 'string' || input.url.length > 2800000) {
+    fail_('BAD_REQUEST', 'Choose a PNG or JPEG background of at most 2 MB.');
+  }
+  if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(input.url)) {
+    const bytes = Utilities.base64Decode(input.url.split(',')[1]);
+    const png = bytes.length >= 8 && (bytes[0] & 255) === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71;
+    const jpeg = bytes.length >= 3 && (bytes[0] & 255) === 255 && (bytes[1] & 255) === 216 && (bytes[2] & 255) === 255;
+    if (!bytes.length || bytes.length > 2097152 || (input.url.indexOf('data:image/png;') === 0 ? !png : !jpeg)) {
+      fail_('BAD_REQUEST', 'The background must be a valid PNG or JPEG of at most 2 MB.');
+    }
+  } else if (!/^assets\/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(png|jpe?g)$/.test(input.url)) {
+    fail_('BAD_REQUEST', 'Upload a PNG or JPEG background.');
+  }
+  if (typeof input.fontUrl !== 'string' || !/^assets\/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(ttf|otf)$/.test(input.fontUrl)) {
+    fail_('BAD_REQUEST', 'Use a bundled certificate font.');
+  }
+  const positions = {};
+  ['name', 'event', 'date', 'id', 'verify'].forEach(function (key) {
+    const position = input.positions && input.positions[key] || (key === 'verify' ? { x: 421, y: 67, size: 7, maxWidth: 700 } : null);
+    if (!position || !Number.isFinite(position.x) || position.x < 0 || position.x > 841.89 ||
+        !Number.isFinite(position.y) || position.y < 0 || position.y > 595.28 ||
+        !Number.isFinite(position.size) || position.size < 6 || position.size > 80 ||
+        !Number.isFinite(position.maxWidth) || position.maxWidth < 10 || position.maxWidth > 800 ||
+        position.x - position.maxWidth / 2 < 0 || position.x + position.maxWidth / 2 > 841.89) {
+      fail_('BAD_REQUEST', 'Text positions and widths must fit on the A4 landscape page.');
+    }
+    positions[key] = { x: position.x, y: position.y, size: position.size, maxWidth: position.maxWidth };
+  });
+  return { url: input.url, fontUrl: input.fontUrl, sample: input.sample === true, positions: positions };
 }
 
 function requireSession_(session) {

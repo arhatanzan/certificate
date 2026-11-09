@@ -2,6 +2,8 @@ import { createIcons, Asterisk, LockKeyhole, ArrowUpRight, ArrowRight, ArrowLeft
 import { createId, isValidId, request } from './api.js';
 import { downloadCertificate, formatDate } from './pdf.js';
 
+window.CERTIFICATE_CONFIG.apiUrl = import.meta.env.VITE_GAS_URL || window.CERTIFICATE_CONFIG.apiUrl;
+
 const icons = { Asterisk, LockKeyhole, ArrowUpRight, ArrowRight, ArrowLeft, Check, CheckCheck, Download, Search, ShieldCheck, Clock3, CalendarDays, BadgeCheck, LoaderCircle, LogOut, RefreshCw, Copy, ExternalLink, AlertCircle, Users, FileCheck2, Hourglass, Mail, ChevronRight };
 const app = document.querySelector('#app');
 const params = new URLSearchParams(location.search);
@@ -123,7 +125,11 @@ async function submitForm(event) {
 
 async function performDownload(certificate, button) {
   busy(button, true, 'Preparing PDF');
-  try { await downloadCertificate(certificate); status('Your PDF is ready. Use the download button if it did not open.'); }
+  try {
+    const { template } = await request('template', {}, 'GET');
+    await downloadCertificate(certificate, template || window.CERTIFICATE_CONFIG.template);
+    status('Your PDF is ready. Use the download button if it did not open.');
+  }
   catch (error) { status(`Your submission is saved. ${error.message}`, true); }
   finally { busy(button, false, 'Download certificate'); }
 }
@@ -170,17 +176,27 @@ async function downloadView() {
 function adminLogin(message = '') {
   session = '';
   submissions = [];
-  app.innerHTML = `<section class="narrow-page admin-login">${heading('ORGANIZER ACCESS', 'The certificate desk.', 'Sign in to review submissions and manage approvals.')}<section class="lookup-section"><div class="section-title">${icon('lock-keyhole')}<h2>Admin sign in</h2></div>${notice()}<form id="login-form"><label for="admin-secret">Admin access key</label><input id="admin-secret" type="password" required autocomplete="current-password" maxlength="256"><button type="submit" class="button primary">Sign in ${icon('arrow-right')}</button></form><div id="status" role="status" class="status" ${message ? '' : 'hidden'}>${escape(message)}</div></section></section>`;
+  app.innerHTML = `<section class="narrow-page admin-login">${heading('ORGANIZER ACCESS', 'The certificate desk.', 'Sign in to review submissions and manage approvals.')}<section class="lookup-section"><div class="section-title">${icon('lock-keyhole')}<h2>Admin sign in</h2></div>${notice()}<form id="login-form"><label for="login-method">Sign-in method</label><select id="login-method"><option value="password">Username and password</option><option value="key">Access key</option></select><div id="username-field" class="login-field"><label for="admin-username">Username</label><input id="admin-username" autocomplete="username" required maxlength="100"></div><div class="login-field"><label id="password-label" for="admin-secret">Password</label><input id="admin-secret" type="password" required autocomplete="current-password" maxlength="256"></div><button type="submit" class="button primary">Sign in ${icon('arrow-right')}</button></form><div id="status" role="status" class="status" ${message ? '' : 'hidden'}>${escape(message)}</div></section></section>`;
   paintIcons();
+  document.querySelector('#login-method').addEventListener('change', event => {
+    const useKey = event.target.value === 'key';
+    document.querySelector('#username-field').hidden = useKey;
+    document.querySelector('#admin-username').required = !useKey;
+    document.querySelector('#password-label').textContent = useKey ? 'Admin access key' : 'Password';
+    document.querySelector('#admin-secret').value = '';
+  });
   document.querySelector('#login-form').addEventListener('submit', async event => {
     event.preventDefault();
     const input = document.querySelector('#admin-secret');
     const secret = input.value;
+    const credentials = document.querySelector('#login-method').value === 'key' ? { secret } : {
+      username: document.querySelector('#admin-username').value.trim(), password: secret
+    };
     input.value = '';
     const button = event.currentTarget.querySelector('button');
     busy(button, true, 'Signing in');
     try {
-      const result = await request('login', { secret });
+      const result = await request('login', credentials);
       session = result.session;
       await adminView();
     } catch (error) { status(error.message, true); busy(button, false, 'Sign in'); }
@@ -188,7 +204,7 @@ function adminLogin(message = '') {
 }
 
 async function adminView() {
-  app.innerHTML = `<section class="admin-page"><div class="admin-heading">${heading('ORGANIZER WORKSPACE', 'Submissions', 'Review the work. Recognize the learner.')}<div class="admin-actions"><button class="icon-button" id="refresh" title="Refresh submissions" aria-label="Refresh submissions">${icon('refresh-cw')}</button><button class="button secondary" id="logout">${icon('log-out')}<span>Sign out</span></button></div></div><div id="admin-stats" class="stats-strip"></div><div class="table-toolbar"><div class="filter-tabs" role="group" aria-label="Filter submissions"><button data-filter="all" class="active" aria-pressed="true">All submissions</button><button data-filter="pending" aria-pressed="false">Pending</button><button data-filter="approved" aria-pressed="false">Approved</button></div><label class="table-search">${icon('search')}<input id="admin-search" type="search" placeholder="Search name or ID" aria-label="Search submissions"></label></div><div id="status" class="status" role="status">Loading submissions...</div><div class="table-scroll"><table><caption class="sr-only">Certificate submissions</caption><thead><tr><th>Participant</th><th>Program</th><th>Submitted</th><th>Status</th><th>Email</th><th>Approved</th></tr></thead><tbody id="submission-rows"></tbody></table></div><p class="admin-footnote" id="row-count"></p></section>`;
+  app.innerHTML = `<section class="admin-page"><div class="admin-heading">${heading('ORGANIZER WORKSPACE', 'Submissions', 'Review the work. Recognize the learner.')}<div class="admin-actions"><button class="button secondary" id="edit-template">${icon('file-check-2')}<span>Template</span></button><button class="icon-button" id="refresh" title="Refresh submissions" aria-label="Refresh submissions">${icon('refresh-cw')}</button><button class="button secondary" id="logout">${icon('log-out')}<span>Sign out</span></button></div></div><div id="admin-stats" class="stats-strip"></div><div class="table-toolbar"><div class="filter-tabs" role="group" aria-label="Filter submissions"><button data-filter="all" class="active" aria-pressed="true">All submissions</button><button data-filter="pending" aria-pressed="false">Pending</button><button data-filter="approved" aria-pressed="false">Approved</button></div><label class="table-search">${icon('search')}<input id="admin-search" type="search" placeholder="Search name or ID" aria-label="Search submissions"></label></div><div id="status" class="status" role="status">Loading submissions...</div><div class="table-scroll"><table><caption class="sr-only">Certificate submissions</caption><thead><tr><th>Participant</th><th>Program</th><th>Submitted</th><th>Status</th><th>Email</th><th>Approved</th></tr></thead><tbody id="submission-rows"></tbody></table></div><p class="admin-footnote" id="row-count"></p></section>`;
   let filter = 'all';
   const render = () => renderRows(filter, document.querySelector('#admin-search').value);
   document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => {
@@ -197,6 +213,12 @@ async function adminView() {
     render();
   }));
   document.querySelector('#admin-search').addEventListener('input', render);
+  document.querySelector('#edit-template').addEventListener('click', async () => {
+    try {
+      const { mountTemplateEditor } = await import('./template-editor.js');
+      await mountTemplateEditor({ app, session, onBack: adminView, onUnauthorized: adminLogin });
+    } catch (error) { status(error.message, true); }
+  });
   document.querySelector('#refresh').addEventListener('click', () => loadSubmissions(render));
   document.querySelector('#logout').addEventListener('click', () => {
     const previous = session;

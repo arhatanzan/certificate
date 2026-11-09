@@ -4,6 +4,7 @@ import fontkit from '@pdf-lib/fontkit';
 async function asset(url) {
   const response = await fetch(new URL(url, document.baseURI));
   if (!response.ok) throw new Error('Certificate artwork or font could not be loaded. Contact the organizer.');
+  if ((response.headers.get('content-type') || '').includes('text/html')) throw new Error('The configured certificate asset is missing. Update the artwork or font path.');
   return new Uint8Array(await response.arrayBuffer());
 }
 
@@ -25,7 +26,10 @@ export async function generateCertificate(certificate, config = window.CERTIFICA
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(fontBytes, { subset: true });
-  const image = background[0] === 0x89 ? await pdf.embedPng(background) : await pdf.embedJpg(background);
+  const isPng = background[0] === 0x89 && background[1] === 0x50 && background[2] === 0x4e && background[3] === 0x47;
+  const isJpeg = background[0] === 0xff && background[1] === 0xd8 && background[2] === 0xff;
+  if (!isPng && !isJpeg) throw new Error('The configured artwork is not a PNG or JPEG image. Upload a supported background in the admin template editor.');
+  const image = isPng ? await pdf.embedPng(background) : await pdf.embedJpg(background);
   const page = pdf.addPage([841.89, 595.28]);
   page.drawImage(image, { x: 0, y: 0, width: 841.89, height: 595.28 });
   if (config.sample) {
@@ -40,15 +44,16 @@ export async function generateCertificate(certificate, config = window.CERTIFICA
   centered(page, font, certificate.id, config.positions.id);
   const verifyUrl = new URL('./', document.baseURI);
   verifyUrl.search = new URLSearchParams({ route: 'verify', id: certificate.id });
-  centered(page, font, verifyUrl.href, { x: 421, y: 67, size: 7, maxWidth: 700 });
+  centered(page, font, verifyUrl.href, config.positions.verify || { x: 421, y: 67, size: 7, maxWidth: 700 });
+  if (certificate.preview) centered(page, font, 'PREVIEW - NOT ISSUED', { x: 421, y: 22, size: 9, maxWidth: 500 }, rgb(0.65, 0.16, 0.12));
   pdf.setTitle(`${certificate.eventTitle} - ${certificate.name}`);
   pdf.setAuthor(certificate.issuer);
   pdf.setSubject(`Certificate ${certificate.id}`);
   return pdf.save();
 }
 
-export async function downloadCertificate(certificate) {
-  const bytes = await generateCertificate(certificate);
+export async function downloadCertificate(certificate, config) {
+  const bytes = await generateCertificate(certificate, config);
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   const anchor = document.createElement('a');
   anchor.href = url;

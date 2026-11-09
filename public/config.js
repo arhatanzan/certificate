@@ -1,9 +1,9 @@
 window.CERTIFICATE_CONFIG = {
   apiUrl: '',
   template: {
-    url: 'assets/certificate-background.png',
+    url: 'assets/green.jpg',
     fontUrl: 'assets/NotoSans-Regular.ttf',
-    sample: true,
+    sample: false,
     positions: {
       name: { x: 421, y: 310, size: 37, maxWidth: 650 },
       event: { x: 421, y: 230, size: 21, maxWidth: 640 },

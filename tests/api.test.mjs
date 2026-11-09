@@ -10,9 +10,9 @@ function fixture() {
   const cache = new Map();
   const emails = [];
   const properties = { SPREADSHEET_ID: 'sheet', FRONTEND_URL: 'https://certificates.example', ADMIN_SECRET: 'a'.repeat(48) };
-  const sheet = {
+  const makeSheet = (cells, name) => ({
     getLastRow: () => cells.length,
-    getName: () => 'Submissions',
+    getName: () => name,
     getParent: () => ({ getId: () => 'sheet' }),
     getRange(row, column, height = 1, width = 1) {
       return {
@@ -20,17 +20,20 @@ function fixture() {
         setNumberFormat() { return this; },
         setValues(values) { values.forEach((items, offset) => items.forEach((value, index) => { (cells[row - 1 + offset] ||= [])[column - 1 + index] = value; })); return this; },
         setValue(value) { return this.setValues([[value]]); },
-        getSheet: () => sheet, getColumn: () => column, getLastColumn: () => column + width - 1,
+        getSheet: () => sheets[name], getColumn: () => column, getLastColumn: () => column + width - 1,
         getRow: () => row, getLastRow: () => row + height - 1
       };
     }
-  };
+  });
+  const sheets = {};
+  const sheet = makeSheet(cells, 'Submissions');
+  sheets.Submissions = sheet;
   const context = vm.createContext({ console, PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
-    SpreadsheetApp: { openById: () => ({ getSheetByName: () => sheet }), flush() {} },
+    SpreadsheetApp: { openById: () => ({ getSheetByName: name => sheets[name] || null, insertSheet: name => (sheets[name] = makeSheet([], name)) }), flush() {} },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
     CacheService: { getScriptCache: () => ({ get: key => cache.get(key), put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
-    Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, computeDigest: (_, value) => [...createHash('sha256').update(value).digest()], getUuid: randomUUID },
+    Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, computeDigest: (_, value) => [...createHash('sha256').update(value).digest()], getUuid: randomUUID, base64Decode: value => [...Buffer.from(value, 'base64')] },
     MailApp: { sendEmail: email => emails.push(email) }, ScriptApp: { AuthMode: { FULL: 'FULL' } }
   });
   vm.runInContext(source, context);
@@ -38,7 +41,7 @@ function fixture() {
   const get = parameter => context.doGet({ parameter });
   const submit = (overrides = {}) => post({ action: 'submit', id: 'FORM-1794220000000-' + 'A'.repeat(32), name: 'Alex Morgan', email: 'alex@example.com', eventId: 'design-foundations', ...overrides });
   const login = () => post({ action: 'login', secret: properties.ADMIN_SECRET }).session;
-  return { cells, sheet, context, post, get, submit, login, emails };
+  return { cells, sheet, context, post, get, submit, login, emails, properties };
 }
 
 test('instant approval is server-controlled, idempotent and publicly verifiable without email', () => {
@@ -93,4 +96,42 @@ test('invalid inputs and sessions are rejected and logout invalidates access', (
   const session = api.login();
   api.post({ action: 'logout', session });
   assert.equal(api.post({ action: 'list', session }).error.code, 'UNAUTHORIZED');
+});
+
+test('username and password are checked server-side without replacing access-key support', () => {
+  const api = fixture();
+  api.properties.ADMIN_USERNAME = 'organizer';
+  api.properties.ADMIN_PASSWORD = 'a-long-test-password-2026';
+  assert.equal(api.post({ action: 'login', username: 'other', password: api.properties.ADMIN_PASSWORD }).error.code, 'UNAUTHORIZED');
+  assert.equal(api.post({ action: 'login', username: 'organizer', password: 'wrong' }).error.code, 'UNAUTHORIZED');
+  const result = api.post({ action: 'login', username: 'organizer', password: api.properties.ADMIN_PASSWORD });
+  assert.equal(result.ok, true);
+  assert.equal(api.post({ action: 'list', session: result.session }).ok, true);
+  assert.ok(api.login());
+});
+
+test('template publishing is authenticated, validates artwork and persists public layout', () => {
+  const api = fixture();
+  assert.equal(api.get({ action: 'template' }).template, null);
+  const template = {
+    url: 'data:image/png;base64,' + Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(80000, 42)]).toString('base64'),
+    fontUrl: 'assets/NotoSans-Regular.ttf', sample: false,
+    positions: Object.fromEntries(['name', 'event', 'date', 'id'].map(key => [key, { x: 421, y: 200, size: 12, maxWidth: 600 }]))
+  };
+  assert.equal(api.post({ action: 'saveTemplate', template }).error.code, 'UNAUTHORIZED');
+  const session = api.login();
+  assert.equal(api.post({ action: 'saveTemplate', session, template }).saved, true);
+  let published = api.get({ action: 'template' }).template;
+  assert.equal(published.url, template.url);
+  assert.equal(published.positions.name.x, 421);
+  assert.equal(published.positions.verify.y, 67);
+  template.url = 'assets/certificate-background.png';
+  template.positions.name.y = 320;
+  assert.equal(api.post({ action: 'saveTemplate', session, template }).ok, true);
+  published = api.get({ action: 'template' }).template;
+  assert.equal(published.positions.name.y, 320);
+  assert.equal(api.post({ action: 'saveTemplate', session, template: { ...template, url: 'data:image/png;base64,YmFk' } }).error.code, 'BAD_REQUEST');
+  template.positions.name.x = -1;
+  assert.equal(api.post({ action: 'saveTemplate', session, template }).error.code, 'BAD_REQUEST');
+  assert.equal(api.cells.length, 1);
 });

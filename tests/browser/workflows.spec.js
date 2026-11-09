@@ -11,6 +11,7 @@ const certificate = { id, name: 'Alex Morgan', eventId: 'instant', eventTitle: '
 
 async function mockApi(page) {
   const rows = [];
+  let publishedTemplate = null;
   await page.route('**/config.js', async route => {
     const response = await route.fetch();
     await route.fulfill({ response, body: (await response.text()).replace("apiUrl: ''", "apiUrl: 'https://script.google.com/macros/s/test/exec'") });
@@ -19,6 +20,8 @@ async function mockApi(page) {
     const request = route.request();
     const body = request.method() === 'POST' ? request.postDataJSON() : Object.fromEntries(new URL(request.url()).searchParams);
     let result = { ok: true };
+    if (body.action === 'template') result.template = publishedTemplate;
+    if (body.action === 'saveTemplate') { publishedTemplate = body.template; result.saved = true; }
     if (body.action === 'events') result.events = events;
     if (body.action === 'submit') {
       const approved = body.eventId === 'instant';
@@ -104,11 +107,12 @@ test('admin signs in, filters, approves and signs out', async ({ page }) => {
   await mockApi(page);
   await page.goto('/?route=admin');
   await expect(page.getByRole('table')).toHaveCount(0);
-  await page.getByLabel('Admin access key').fill('test-access-key');
+  await page.getByLabel('Username', { exact: true }).fill('organizer');
+  await page.getByLabel('Password', { exact: true }).fill('test-password-2026');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('table')).toBeVisible();
   await page.getByRole('button', { name: 'Pending', exact: true }).click();
-  await page.getByRole('switch').check();
+  await page.getByRole('switch').click();
   await expect(page.getByText('No submissions found.')).toBeVisible();
   await page.getByRole('button', { name: 'Approved', exact: true }).click();
   await expect(page.getByRole('switch')).toBeChecked();
@@ -125,4 +129,51 @@ test('registration is responsive and key assets render', async ({ page }, testIn
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate(element => element.complete && element.naturalWidth > 0)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('registration.png'), fullPage: true });
+});
+
+test('admin uploads, positions, previews and publishes a persistent template', async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto('/?route=admin');
+  await page.getByLabel('Username', { exact: true }).fill('organizer');
+  await page.getByLabel('Password', { exact: true }).fill('test-password-2026');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Template', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish template' })).toBeEnabled();
+  await page.locator('#template-artwork').setInputFiles('public/assets/green.jpg');
+  await expect(page.locator('#template-status')).toContainText('Artwork loaded.');
+  await expect(page.getByLabel('Include sample headings')).not.toBeChecked();
+  await page.getByLabel('Vertical position (pt)').fill('330');
+  await page.getByLabel('Font size (pt)').fill('32');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download preview PDF' }).click();
+  const download = await downloadPromise;
+  const pdf = await PDFDocument.load(await readFile(await download.path()));
+  expect(pdf.getPages()).toHaveLength(1);
+  await page.getByRole('button', { name: 'Publish template' }).click();
+  await expect(page.locator('#template-status')).toContainText('Template published.');
+  await page.getByRole('button', { name: 'Submissions', exact: true }).click();
+  await page.getByRole('button', { name: 'Template', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish template' })).toBeEnabled();
+  await expect(page.getByLabel('Vertical position (pt)')).toHaveValue('330');
+  await expect(page.getByLabel('Font size (pt)')).toHaveValue('32');
+  const pixel = await page.locator('#template-canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(40, 40, 1, 1).data]);
+  expect(pixel[3]).toBe(255);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('template-editor.png'), fullPage: true });
+});
+
+test('a missing background can be replaced without editing configuration files', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/assets/green.jpg', route => route.fulfill({ status: 404, body: 'Missing image' }));
+  await page.goto('/?route=admin');
+  await page.getByLabel('Username', { exact: true }).fill('organizer');
+  await page.getByLabel('Password', { exact: true }).fill('test-password-2026');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Template', exact: true }).click();
+  await expect(page.locator('#template-status')).toContainText('background could not be loaded');
+  await expect(page.locator('#template-artwork')).toBeEnabled();
+  await page.locator('#template-artwork').setInputFiles('public/assets/green.jpg');
+  await expect(page.getByRole('button', { name: 'Publish template' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Publish template' }).click();
+  await expect(page.locator('#template-status')).toContainText('Template published.');
 });
