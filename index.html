@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#17624e">
+    <meta name="description" content="Open Workshop certificate registration and verification.">
+    <title>Open Workshop | Certificates</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/styles.css">
+    <script src="./config.js"></script>
+    <script type="module" src="/src/app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="?route=register" aria-label="Open Workshop home"><span class="brand-symbol"><i data-lucide="asterisk"></i></span><span>open workshop<span class="brand-caption">LEARN. MAKE. BELONG.</span></span></a>
+      <nav aria-label="Main navigation">
+        <a href="?route=register" data-route="register">Get a certificate</a>
+        <a href="?route=verify" data-route="verify">Verify certificate</a>
+        <a href="?route=admin" data-route="admin" class="admin-nav"><i data-lucide="lock-keyhole"></i><span>Admin</span></a>
+      </nav>
+    </header>
+    <main id="app"></main>
+    <footer><span>Open Workshop <span class="footer-dot">/</span> A little proof of a lot of learning.</span><a href="?route=verify">Certificate registry <i data-lucide="arrow-up-right"></i></a></footer>
+    <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+  </body>
+</html>
